@@ -371,32 +371,33 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public void saveBase64(String dataUrl, String fileName, String mimeType, long size) {
-            Log.d(TAG, "JS saveBase64: name=" + fileName + " mime=" + mimeType + " size=" + size);
-
             new Thread(() -> {
                 try {
                     String base64 = dataUrl.contains(",")
                         ? dataUrl.substring(dataUrl.indexOf(",") + 1)
                         : dataUrl;
-
+        
+                    // final local copy তৈরি করুন
+                    String finalMime = mimeType;
                     if (dataUrl.contains(":") && dataUrl.contains(";")) {
                         String headerMime = dataUrl.substring(
                             dataUrl.indexOf(":") + 1, dataUrl.indexOf(";"));
-                        if (!headerMime.isEmpty()) mimeType = headerMime;
+                        if (!headerMime.isEmpty()) finalMime = headerMime;
                     }
-
+        
                     byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
-
-                    String ext = mimeToExt(mimeType);
-                    if (fileName == null || fileName.isEmpty() || fileName.equals("download")) {
-                        fileName = "download_" + timestamp() + ext;
+        
+                    String ext = mimeToExt(finalMime);
+                    String finalName = fileName;
+                    if (finalName == null || finalName.isEmpty() || finalName.equals("download")) {
+                        finalName = "download_" + timestamp() + ext;
                     }
-                    if (!fileName.contains(".")) {
-                        fileName += ext;
+                    if (!finalName.contains(".")) {
+                        finalName += ext;
                     }
-
-                    saveBytes(bytes, fileName, mimeType);
-
+        
+                    saveBytes(bytes, finalName, finalMime);
+        
                 } catch (Exception e) {
                     Log.e(TAG, "saveBase64 failed", e);
                     toast("Save failed");
