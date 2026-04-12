@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebView Test</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:system-ui;padding:20px;background:linear-gradient(135deg,#667eea,#764ba2);min-height:100vh}
+        .box{max-width:500px;margin:0 auto;background:#fff;padding:30px;border-radius:20px}
+        h1{text-align:center;margin-bottom:30px;font-size:22px}
+        button{width:100%;padding:15px;margin:8px 0;border:none;border-radius:10px;font-size:16px;color:#fff;cursor:pointer}
+        .b1{background:#667eea}
+        .b2{background:#28a745}
+        .b3{background:#dc3545}
+        .b4{background:#fd7e14}
+        #log{margin-top:20px;padding:15px;background:#f1f1f1;border-radius:10px;font-size:14px;max-height:200px;overflow-y:auto}
+    </style>
+</head>
+<body>
+<div class="box">
+    <h1>Universal WebView Test</h1>
+    
+    <button class="b1" onclick="testPNG()">Test PNG Download</button>
+    <button class="b2" onclick="testPDF()">Test PDF Download</button>
+    <button class="b3" onclick="testTXT()">Test TXT Download</button>
+    <button class="b4" onclick="testHTTP()">Test HTTP Download</button>
+    
+    <div id="log"></div>
+</div>
+
+<script>
+function log(m){document.getElementById('log').innerHTML+=m+'<br>'}
+
+function testPNG(){
+    log('Creating PNG...');
+    var c=document.createElement('canvas');
+    c.width=400;c.height=300;
+    var x=c.getContext('2d');
+    var g=x.createLinearGradient(0,0,400,300);
+    g.addColorStop(0,'#667eea');g.addColorStop(1,'#764ba2');
+    x.fillStyle=g;x.fillRect(0,0,400,300);
+    x.fillStyle='#fff';x.font='bold 28px Arial';x.textAlign='center';
+    x.fillText('Test Image',200,140);
+    x.font='16px Arial';
+    x.fillText(new Date().toLocaleString(),200,180);
+    var a=document.createElement('a');
+    a.download='test_image.png';
+    a.href=c.toDataURL('image/png');
+    a.click();
+    log('PNG download triggered!');
+}
+
+function testPDF(){
+    log('Creating PDF blob...');
+    var pdf='%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 44>>stream\nBT /F1 24 Tf 100 700 Td(Test PDF)Tj ET\nendstream\nendobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000266 00000 n \n0000000359 00000 n \ntrailer<</Size 6/Root 1 0 R>>\nstartxref\n434\n%%EOF';
+    var blob=new Blob([pdf],{type:'application/pdf'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.download='test_document.pdf';
+    a.href=url;
+    a.click();
+    URL.revokeObjectURL(url);
+    log('PDF download triggered!');
+}
+
+function testTXT(){
+    log('Creating TXT blob...');
+    var txt='Hello from Universal WebView!\n\nThis is a test file.\nTime: '+new Date().toLocaleString();
+    var blob=new Blob([txt],{type:'text/plain'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.download='test_file.txt';
+    a.href=url;
+    a.click();
+    URL.revokeObjectURL(url);
+    log('TXT download triggered!');
+}
+
+function testHTTP(){
+    log('Downloading from HTTP...');
+    var a=document.createElement('a');
+    a.href='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
+    a.download='sample.pdf';
+    a.click();
+    log('HTTP download triggered!');
+}
+</script>
+</body>
+</html>
