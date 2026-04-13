@@ -1,11 +1,7 @@
-name: Build Release APK
+name: Build Unsigned Release APK
 
 on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
-  workflow_dispatch:  # ম্যানুয়ালি trigger করতে চাইলে
+  workflow_dispatch:  # ম্যানুয়ালি trigger করা
 
 jobs:
   build:
