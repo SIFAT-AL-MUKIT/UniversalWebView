@@ -3,33 +3,29 @@ plugins {
 }
 
 android {
-    namespace 'com.myapp.webview'
+    namespace 'com.webviewapp.template'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.myapp.webview"
-        minSdk 26
+        applicationId "com.webviewapp.template"
+        minSdk 24
         targetSdk 34
         versionCode 1
         versionName "1.0"
     }
 
     buildTypes {
-        debug {
-            minifyEnabled false
-        }
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                    'proguard-rules.pro'
         }
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
-    
-    lint {
-        abortOnError false
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 }
 
@@ -37,4 +33,6 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.coordinatorlayout:coordinatorlayout:1.2.0'
+    implementation 'androidx.core:core:1.12.0'
+    implementation 'androidx.core:core-splashscreen:1.0.1'
 }
