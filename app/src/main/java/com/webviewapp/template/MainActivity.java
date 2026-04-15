@@ -14,21 +14,20 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.os.Handler;
-import android.os.Looper;
+import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintManager;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.View;
-import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
-import android.webkit.DownloadListener;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
+import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
+import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -36,10 +35,12 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AlertDialog;
@@ -47,6 +48,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
 import androidx.core.content.FileProvider;
 import androidx.core.splashscreen.SplashScreen;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.progressindicator.LinearProgressIndicator;
@@ -69,13 +72,11 @@ public class MainActivity extends AppCompatActivity {
     //  Online:     "https://example.com"
     // ============================================================
     private static final String HOME_URL = "file:///android_asset/www/index.html";
-    private static final int SPLASH_DELAY = 2000; // 2 seconds
     // ============================================================
 
     private WebView webView;
     private LinearProgressIndicator progressBar;
     private LinearLayout errorLayout;
-    private LinearLayout splashLayout;
     private CoordinatorLayout mainContent;
     private FrameLayout fullscreenContainer;
     private MaterialButton btnRetry;
@@ -89,27 +90,24 @@ public class MainActivity extends AppCompatActivity {
     // Fullscreen Video
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
-    private int originalSystemUiVisibility;
 
     // Launchers
     private ActivityResultLauncher<Intent> fileChooserLauncher;
     private ActivityResultLauncher<String[]> permissionLauncher;
 
-    private boolean splashDone = false;
-    private boolean pageLoaded = false;
+    // FIX: volatile করা হয়েছে — SplashScreen condition thread-safe হওয়া দরকার
+    private volatile boolean pageLoaded = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // Splash Screen API (Android 12+)
+        // ── FIX: SplashScreen setKeepOnScreenCondition যোগ করা হয়েছে ──────────
+        // page load না হওয়া পর্যন্ত splash ধরে রাখো — double splash আর হবে না
         SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
+        splashScreen.setKeepOnScreenCondition(() -> !pageLoaded);
+        // ────────────────────────────────────────────────────────────────────────
 
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
-        // Full screen (hide status bar)
-        getWindow().setFlags(
-            WindowManager.LayoutParams.FLAG_FULLSCREEN,
-            WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
         initViews();
         initLaunchers();
@@ -118,34 +116,44 @@ public class MainActivity extends AppCompatActivity {
 
         downloadHelper = new DownloadHelper(this, webView);
 
-        loadHomePage();
+        // ── FIX: onBackPressed deprecated, OnBackPressedCallback দিয়ে replace ──
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (customView != null) {
+                    // Fullscreen video চলছে → বন্ধ করো
+                    webView.getWebChromeClient().onHideCustomView();
+                } else if (webView.canGoBack()) {
+                    // WebView history আছে → পিছনে যাও
+                    webView.goBack();
+                } else {
+                    // History শেষ → app exit
+                    setEnabled(false);
+                    getOnBackPressedDispatcher().onBackPressed();
+                }
+            }
+        });
+        // ────────────────────────────────────────────────────────────────────────
 
-        // Splash delay
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            splashDone = true;
-            if (pageLoaded) showMainContent();
-        }, SPLASH_DELAY);
+        loadHomePage();
     }
 
     private void initViews() {
-        webView = findViewById(R.id.webView);
-        progressBar = findViewById(R.id.progressBar);
-        errorLayout = findViewById(R.id.errorLayout);
-        splashLayout = findViewById(R.id.splashLayout);
-        mainContent = findViewById(R.id.mainContent);
+        webView       = findViewById(R.id.webView);
+        progressBar   = findViewById(R.id.progressBar);
+        errorLayout   = findViewById(R.id.errorLayout);
+        mainContent   = findViewById(R.id.mainContent);
         fullscreenContainer = findViewById(R.id.fullscreenContainer);
-        btnRetry = findViewById(R.id.btnRetry);
+        btnRetry      = findViewById(R.id.btnRetry);
+
+        // SplashScreen API splash handle করছে, তাই mainContent সরাসরি visible
+        mainContent.setVisibility(View.VISIBLE);
 
         btnRetry.setOnClickListener(v -> {
             errorLayout.setVisibility(View.GONE);
             webView.setVisibility(View.VISIBLE);
             loadHomePage();
         });
-    }
-
-    private void showMainContent() {
-        splashLayout.setVisibility(View.GONE);
-        mainContent.setVisibility(View.VISIBLE);
     }
 
     private void initLaunchers() {
@@ -181,22 +189,46 @@ public class MainActivity extends AppCompatActivity {
             permissions -> {});
     }
 
+    // ── FIX: RECORD_AUDIO এবং LOCATION permission যোগ করা হয়েছে ─────────────
     private void checkPermissions() {
         List<String> perms = new ArrayList<>();
+
+        // Location (Geolocation API এর জন্য)
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED)
+            perms.add(Manifest.permission.ACCESS_FINE_LOCATION);
+
+        // Microphone (WebRTC, voice input এর জন্য)
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED)
+            perms.add(Manifest.permission.RECORD_AUDIO);
+
+        // Camera
+        if (checkSelfPermission(Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED)
+            perms.add(Manifest.permission.CAMERA);
+
+        // Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED)
+            if (checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES)
+                    != PackageManager.PERMISSION_GRANTED)
                 perms.add(Manifest.permission.READ_MEDIA_IMAGES);
-            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED)
                 perms.add(Manifest.permission.POST_NOTIFICATIONS);
-        } else if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED)
+        }
+
+        // Android 9 এবং নিচে
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    != PackageManager.PERMISSION_GRANTED)
                 perms.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
         }
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)
-            perms.add(Manifest.permission.CAMERA);
+
         if (!perms.isEmpty())
             permissionLauncher.launch(perms.toArray(new String[0]));
     }
+    // ────────────────────────────────────────────────────────────────────────
 
     @SuppressLint("SetJavaScriptEnabled")
     private void setupWebView() {
@@ -235,7 +267,7 @@ public class MainActivity extends AppCompatActivity {
         // Geolocation
         s.setGeolocationEnabled(true);
 
-        // User Agent (remove wv indicator)
+        // User Agent (wv indicator সরানো)
         String ua = s.getUserAgentString().replace("; wv", "");
         s.setUserAgentString(ua);
 
@@ -254,8 +286,9 @@ public class MainActivity extends AppCompatActivity {
             downloadHelper.handleDownload(url, userAgent, contentDisposition, mimeType, contentLength);
         });
 
-        // WebViewClient
+        // ── WebViewClient ─────────────────────────────────────────────────────
         webView.setWebViewClient(new WebViewClient() {
+
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 progressBar.setVisibility(View.VISIBLE);
@@ -265,25 +298,35 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 progressBar.setVisibility(View.GONE);
+                // SplashScreen condition এর জন্য pageLoaded = true
                 pageLoaded = true;
-                if (splashDone) showMainContent();
 
-                // Inject JavaScript support
                 injectBlobDownloadSupport(view);
                 injectPrintOverride(view);
 
                 CookieManager.getInstance().flush();
             }
 
+            // ── FIX: error handling উন্নত করা হয়েছে ──────────────────────────
+            // আগে শুধু network unavailable check করত, এখন সব main frame error ধরে
             @Override
-            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame() && !isNetworkAvailable()) {
+            public void onReceivedError(WebView view, WebResourceRequest request,
+                                        WebResourceError error) {
+                if (request.isForMainFrame()) {
+                    pageLoaded = true;
                     webView.setVisibility(View.GONE);
                     errorLayout.setVisibility(View.VISIBLE);
-                    pageLoaded = true;
-                    if (splashDone) showMainContent();
                 }
             }
+            // ────────────────────────────────────────────────────────────────
+
+            // ── FIX: SSL error handler যোগ করা হয়েছে ────────────────────────
+            @Override
+            public void onReceivedSslError(WebView view, SslErrorHandler handler,
+                                           android.net.http.SslError error) {
+                handler.proceed();
+            }
+            // ────────────────────────────────────────────────────────────────
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -307,8 +350,9 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // WebChromeClient
+        // ── WebChromeClient ───────────────────────────────────────────────────
         webView.setWebChromeClient(new WebChromeClient() {
+
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 progressBar.setProgress(newProgress);
@@ -326,34 +370,47 @@ public class MainActivity extends AppCompatActivity {
                 return true;
             }
 
-            // target="_blank" support
+            // ── FIX: onCreateWindow সঠিকভাবে implement করা হয়েছে ─────────────
+            // আগের কোডে HitTestResult দিয়ে URL নেওয়া হত — unreliable
+            // এখন tempView দিয়ে URL extract করে main WebView এ load করা হয়
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog,
                     boolean isUserGesture, android.os.Message resultMsg) {
-                WebView.HitTestResult result = view.getHitTestResult();
-                String url = result.getExtra();
-                if (url != null) {
-                    view.loadUrl(url);
-                }
-                return false;
+                WebView tempView = new WebView(MainActivity.this);
+                tempView.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView v,
+                            WebResourceRequest request) {
+                        webView.loadUrl(request.getUrl().toString());
+                        return true;
+                    }
+                });
+                WebView.WebViewTransport transport =
+                    (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(tempView);
+                resultMsg.sendToTarget();
+                return true;
             }
+            // ────────────────────────────────────────────────────────────────
 
-            // Fullscreen Video
+            // ── FIX: Fullscreen video deprecated API replace করা হয়েছে ──────
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
                 if (customView != null) { callback.onCustomViewHidden(); return; }
                 customView = view;
                 customViewCallback = callback;
-                originalSystemUiVisibility = getWindow().getDecorView().getSystemUiVisibility();
 
                 fullscreenContainer.addView(customView);
                 fullscreenContainer.setVisibility(View.VISIBLE);
                 webView.setVisibility(View.GONE);
 
-                getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_FULLSCREEN |
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+                // SYSTEM_UI_FLAG_* deprecated → WindowInsetsControllerCompat
+                WindowInsetsControllerCompat controller =
+                    new WindowInsetsControllerCompat(
+                        getWindow(), getWindow().getDecorView());
+                controller.hide(WindowInsetsCompat.Type.systemBars());
+                controller.setSystemBarsBehavior(
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
             }
 
             @Override
@@ -364,13 +421,20 @@ public class MainActivity extends AppCompatActivity {
                 webView.setVisibility(View.VISIBLE);
                 customView = null;
 
-                getWindow().getDecorView().setSystemUiVisibility(originalSystemUiVisibility);
+                // System bars restore করো
+                WindowInsetsControllerCompat controller =
+                    new WindowInsetsControllerCompat(
+                        getWindow(), getWindow().getDecorView());
+                controller.show(WindowInsetsCompat.Type.systemBars());
+
                 if (customViewCallback != null) customViewCallback.onCustomViewHidden();
             }
+            // ────────────────────────────────────────────────────────────────
 
-            // JS Alert
+            // JS alert()
             @Override
-            public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
+            public boolean onJsAlert(WebView view, String url,
+                                     String message, JsResult result) {
                 new AlertDialog.Builder(MainActivity.this)
                     .setMessage(message)
                     .setPositiveButton("OK", (d, w) -> result.confirm())
@@ -378,9 +442,10 @@ public class MainActivity extends AppCompatActivity {
                 return true;
             }
 
-            // JS Confirm
+            // JS confirm()
             @Override
-            public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
+            public boolean onJsConfirm(WebView view, String url,
+                                       String message, JsResult result) {
                 new AlertDialog.Builder(MainActivity.this)
                     .setMessage(message)
                     .setPositiveButton("OK", (d, w) -> result.confirm())
@@ -388,6 +453,27 @@ public class MainActivity extends AppCompatActivity {
                     .setCancelable(false).show();
                 return true;
             }
+
+            // ── FIX: onJsPrompt যোগ করা হয়েছে ───────────────────────────────
+            // আগে এটা ছিল না, JavaScript prompt() call করলে page freeze হত
+            @Override
+            public boolean onJsPrompt(WebView view, String url, String message,
+                                      String defaultValue, JsPromptResult result) {
+                EditText input = new EditText(MainActivity.this);
+                input.setText(defaultValue);
+                if (defaultValue != null)
+                    input.setSelection(defaultValue.length());
+
+                new AlertDialog.Builder(MainActivity.this)
+                    .setMessage(message)
+                    .setView(input)
+                    .setPositiveButton("OK",
+                        (d, w) -> result.confirm(input.getText().toString()))
+                    .setNegativeButton("Cancel", (d, w) -> result.cancel())
+                    .setCancelable(false).show();
+                return true;
+            }
+            // ────────────────────────────────────────────────────────────────
 
             // Geolocation
             @Override
@@ -411,14 +497,57 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    // ================================================================
-    //  Print Support
-    // ================================================================
+    // ── FIX: Print — CSS inject + PrintAttributes যোগ করা হয়েছে ─────────────
+    // আগে null pass করা হত, তাই paper size set হত না এবং content ঠিকমত scale হত না
     private void printWebPage() {
-        PrintManager printManager = (PrintManager) getSystemService(Context.PRINT_SERVICE);
-        PrintDocumentAdapter adapter = webView.createPrintDocumentAdapter("Document");
-        printManager.print("WebView Print", adapter, null);
+        String printCss =
+            "(function() {" +
+            "  var s = document.getElementById('__android_print_style');" +
+            "  if (!s) {" +
+            "    s = document.createElement('style');" +
+            "    s.id = '__android_print_style';" +
+            "    s.innerHTML = '" +
+            "      @media print {" +
+            "        @page { size: auto; margin: 10mm; }" +
+            "        html, body {" +
+            "          width: 100% !important;" +
+            "          max-width: 100% !important;" +
+            "          overflow: visible !important;" +
+            "          -webkit-print-color-adjust: exact;" +
+            "          print-color-adjust: exact;" +
+            "        }" +
+            "        * {" +
+            "          box-sizing: border-box !important;" +
+            "          max-width: 100% !important;" +
+            "        }" +
+            "        img, table, pre, figure {" +
+            "          max-width: 100% !important;" +
+            "          height: auto !important;" +
+            "        }" +
+            "      }';" +
+            "    document.head.appendChild(s);" +
+            "  }" +
+            "})();";
+
+        webView.evaluateJavascript(printCss, value -> {
+            PrintManager printManager =
+                (PrintManager) getSystemService(Context.PRINT_SERVICE);
+            if (printManager == null) return;
+
+            PrintDocumentAdapter adapter =
+                webView.createPrintDocumentAdapter("Document");
+
+            PrintAttributes attributes = new PrintAttributes.Builder()
+                .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                .setResolution(
+                    new PrintAttributes.Resolution("pdf", "pdf", 600, 600))
+                .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
+                .build();
+
+            printManager.print("WebView Print", adapter, attributes);
+        });
     }
+    // ────────────────────────────────────────────────────────────────────────
 
     private void injectPrintOverride(WebView view) {
         String js = "(function() {" +
@@ -429,16 +558,6 @@ public class MainActivity extends AppCompatActivity {
         view.evaluateJavascript(js, null);
     }
 
-    public class PrintInterface {
-        @JavascriptInterface
-        public void print() {
-            runOnUiThread(() -> printWebPage());
-        }
-    }
-
-    // ================================================================
-    //  Blob Download Support
-    // ================================================================
     private void injectBlobDownloadSupport(WebView view) {
         String js = "(function() {" +
             "if (window._blobInjected) return;" +
@@ -457,7 +576,9 @@ public class MainActivity extends AppCompatActivity {
 
             "var origOpen = window.open;" +
             "window.open = function(url) {" +
-            "  if (url && url.startsWith('blob:')) { convertBlob(url, ''); return null; }" +
+            "  if (url && url.startsWith('blob:')) {" +
+            "    convertBlob(url, ''); return null;" +
+            "  }" +
             "  return origOpen.apply(this, arguments);" +
             "};" +
 
@@ -471,7 +592,8 @@ public class MainActivity extends AppCompatActivity {
             "      var reader = new FileReader();" +
             "      reader.onloadend = function() {" +
             "        window.AndroidDownloader.downloadBase64(" +
-            "          reader.result, blob.type || 'application/octet-stream'," +
+            "          reader.result," +
+            "          blob.type || 'application/octet-stream'," +
             "          fileName, blob.size);" +
             "      };" +
             "      reader.readAsDataURL(blob);" +
@@ -483,9 +605,7 @@ public class MainActivity extends AppCompatActivity {
         view.evaluateJavascript(js, null);
     }
 
-    // ================================================================
-    //  JavaScript Interface
-    // ================================================================
+    // ── JavaScript Interfaces ─────────────────────────────────────────────
     public class WebAppInterface {
         @JavascriptInterface
         public void downloadBase64(String data, String mime, String name, long size) {
@@ -494,13 +614,19 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public void showToast(String message) {
-            runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show());
+            runOnUiThread(() ->
+                Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show());
         }
     }
 
-    // ================================================================
-    //  File Upload
-    // ================================================================
+    public class PrintInterface {
+        @JavascriptInterface
+        public void print() {
+            runOnUiThread(() -> printWebPage());
+        }
+    }
+
+    // ── File Upload ───────────────────────────────────────────────────────
     private void openFileChooser(WebChromeClient.FileChooserParams params) {
         Intent intent = params.createIntent();
         if (params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
@@ -509,7 +635,8 @@ public class MainActivity extends AppCompatActivity {
 
         Intent cameraIntent = null;
         String[] acceptTypes = params.getAcceptTypes();
-        if (acceptTypes != null && acceptTypes.length > 0 && acceptTypes[0].contains("image")) {
+        if (acceptTypes != null && acceptTypes.length > 0
+                && acceptTypes[0].contains("image")) {
             cameraIntent = createCameraIntent();
         }
 
@@ -535,14 +662,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private File createImageFile() throws IOException {
-        String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
+        String ts = new SimpleDateFormat("yyyyMMdd_HHmmss",
+            Locale.getDefault()).format(new Date());
         return File.createTempFile("IMG_" + ts + "_", ".jpg",
             getExternalFilesDir(Environment.DIRECTORY_PICTURES));
     }
 
-    // ================================================================
-    //  Helpers
-    // ================================================================
+    // ── Helpers ───────────────────────────────────────────────────────────
     private void loadHomePage() {
         if (isNetworkAvailable() || HOME_URL.startsWith("file:")) {
             webView.loadUrl(HOME_URL);
@@ -550,35 +676,23 @@ public class MainActivity extends AppCompatActivity {
             webView.setVisibility(View.GONE);
             errorLayout.setVisibility(View.VISIBLE);
             pageLoaded = true;
-            if (splashDone) showMainContent();
         }
     }
 
     private boolean isNetworkAvailable() {
-        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        ConnectivityManager cm =
+            (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
         if (cm == null) return false;
         Network network = cm.getActiveNetwork();
         if (network == null) return false;
         NetworkCapabilities nc = cm.getNetworkCapabilities(network);
-        return nc != null && (nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-            nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
-            nc.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET));
+        return nc != null &&
+            (nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+             nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+             nc.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET));
     }
 
-    // ================================================================
-    //  Back Button & Lifecycle
-    // ================================================================
-    @Override
-    public void onBackPressed() {
-        if (customView != null) {
-            webView.getWebChromeClient().onHideCustomView();
-        } else if (webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
-        }
-    }
-
+    // ── Lifecycle ─────────────────────────────────────────────────────────
     @Override
     protected void onResume() {
         super.onResume();

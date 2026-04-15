@@ -4,7 +4,11 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- Splash Layout (initially visible) -->
+    <!--
+        FIX: visibility="visible" → "gone" করা হয়েছে।
+        SplashScreen API এখন splash handle করছে।
+        এটা visible রাখলে system splash এর পরে আবার এই layout দেখাত — double splash।
+    -->
     <LinearLayout
         android:id="@+id/splashLayout"
         android:layout_width="match_parent"
@@ -12,7 +16,7 @@
         android:orientation="vertical"
         android:gravity="center"
         android:background="@color/splash_bg"
-        android:visibility="visible">
+        android:visibility="gone">
 
         <TextView
             android:layout_width="wrap_content"
@@ -40,7 +44,7 @@
 
     </LinearLayout>
 
-    <!-- Main Content Layout (initially gone) -->
+    <!-- Main Content Layout -->
     <androidx.coordinatorlayout.widget.CoordinatorLayout
         android:id="@+id/mainContent"
         android:layout_width="match_parent"
@@ -59,12 +63,14 @@
             app:indicatorColor="@color/purple_500"
             app:trackColor="@android:color/transparent" />
 
-        <!-- WebView -->
+        <!--
+            FIX: android:layout_marginTop="3dp" সরানো হয়েছে।
+            এই margin এর কারণে progress bar চলে গেলেও উপরে একটা ফাঁক থাকত।
+        -->
         <WebView
             android:id="@+id/webView"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:layout_marginTop="3dp" />
+            android:layout_height="match_parent" />
 
         <!-- Fullscreen Video Container -->
         <FrameLayout

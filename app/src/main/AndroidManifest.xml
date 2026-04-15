@@ -22,6 +22,13 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- FIX: Microphone — WebRTC ও voice input এর জন্য দরকার -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- FIX: Location — Geolocation API এর জন্য দরকার -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <!-- Notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -36,7 +43,6 @@
         android:hardwareAccelerated="true"
         android:largeHeap="true">
 
-        <!-- Splash + Main Activity (combined) -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
