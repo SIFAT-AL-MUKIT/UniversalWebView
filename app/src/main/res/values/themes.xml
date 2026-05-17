@@ -9,10 +9,21 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
     </style>
 
-    <!-- Splash Screen Theme -->
-    <style name="AppTheme.Splash" parent="AppTheme">
-        <item name="android:windowBackground">@drawable/splash_bg</item>
-        <item name="android:statusBarColor">@color/splash_bg</item>
-        <item name="android:navigationBarColor">@color/splash_bg</item>
+    <!--
+        FIX: Splash Screen Theme
+        আগে parent="AppTheme" ছিল — SplashScreen API কাজ করত না।
+        এখন parent="Theme.SplashScreen" করা হয়েছে।
+
+        windowSplashScreenBackground  → কালো background
+        windowSplashScreenAnimatedIcon → মাঝখানে splash ছবি
+        postSplashScreenTheme          → splash শেষে AppTheme এ switch
+
+        ⚠️ drawable/ ফোল্ডারে "splash" নামে একটা ছবি থাকতে হবে।
+           (splash.png / splash.webp / splash.xml যেকোনো format)
+    -->
+    <style name="AppTheme.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#FF000000</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash</item>
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
     </style>
 </resources>
